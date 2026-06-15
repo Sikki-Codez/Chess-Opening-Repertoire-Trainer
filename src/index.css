@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@theme {
+  --color-board-light: #f0d9b5;
+  --color-board-dark: #b58863;
+  --color-highlight-correct: #a7f3d0;
+  --color-highlight-incorrect: #fecaca;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-900 text-slate-100 antialiased font-sans m-0 p-0;
+  }
+}
