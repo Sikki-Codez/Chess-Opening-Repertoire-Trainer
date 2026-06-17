@@ -4,6 +4,7 @@ import { Chessboard } from 'react-chessboard';
 import { openingBook, lookupByMoves } from '@chess-openings/eco.json';
 import { Loader2 } from 'lucide-react';
 import Tree from 'react-d3-tree';
+import StockfishWorker from './stockfishWorker?worker';
 import './index.css';
 
 // Curated list of popular openings for the demo dropdown
@@ -29,6 +30,16 @@ export default function App() {
   const [ExpectedMoves, SetExpectedMoves] = useState([]);
   const [TreeData, SetTreeData] = useState({ name: 'Start' });
   const TreeContainerRef = useRef(null);
+  const EngineWorkerRef = useRef(null);
+
+  useEffect(() => {
+    EngineWorkerRef.current = new StockfishWorker();
+    return () => {
+      if (EngineWorkerRef.current) {
+        EngineWorkerRef.current.terminate();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     openingBook().then((Data) => {
@@ -115,31 +126,116 @@ export default function App() {
     }, 500); // 500ms delay for realism
   };
 
+  const EvaluateFen = (Fen) => {
+    return new Promise((resolve) => {
+      let FinalScore = 0;
+      let TimeoutId = null;
+
+      const Cleanup = () => {
+        if (TimeoutId) clearTimeout(TimeoutId);
+        EngineWorkerRef.current.removeEventListener('message', Listener);
+      };
+
+      const Listener = (e) => {
+        const Line = e.data;
+        if (typeof Line !== 'string') return;
+        
+        if (Line.includes('info depth')) {
+          const CpMatch = Line.match(/score cp (-?\d+)/);
+          const MateMatch = Line.match(/score mate (-?\d+)/);
+          if (CpMatch) {
+            FinalScore = parseInt(CpMatch[1], 10) / 100;
+          } else if (MateMatch) {
+            const MateIn = parseInt(MateMatch[1], 10);
+            FinalScore = MateIn > 0 ? 100 : -100;
+          }
+        }
+        
+        if (Line.startsWith('bestmove')) {
+          Cleanup();
+          resolve(FinalScore);
+        }
+      };
+
+      TimeoutId = setTimeout(() => {
+        Cleanup();
+        resolve(FinalScore);
+      }, 5000);
+
+      EngineWorkerRef.current.addEventListener('message', Listener);
+      EngineWorkerRef.current.postMessage('ucinewgame');
+      EngineWorkerRef.current.postMessage('position fen ' + Fen);
+      EngineWorkerRef.current.postMessage('go depth 16');
+    });
+  };
+
+  const EvaluateDeviation = async (ExpectedFen, ActualFen, ExpectedMove, PlayedMove) => {
+    SetLastError('Analyzing mistake...');
+    
+    const GetScoreFromWhitePerspective = async (Fen) => {
+      const Score = await EvaluateFen(Fen);
+      if (Score === null) return 0;
+      const IsWhiteToMove = Fen.split(' ')[1] === 'w';
+      return IsWhiteToMove ? Score : -Score;
+    };
+
+    const ExpectedScore = await GetScoreFromWhitePerspective(ExpectedFen);
+    const ActualScore = await GetScoreFromWhitePerspective(ActualFen);
+    
+    let Drop = PlayerColor === 'w' ? (ExpectedScore - ActualScore) : (ActualScore - ExpectedScore);
+    
+    SetLastError(`Mistake! Expected ${ExpectedMove}, but you played ${PlayedMove}. Evaluation dropped by ${Drop.toFixed(1)} points.`);
+  };
+
   function OnPieceDrop({ sourceSquare, targetSquare }) {
     // Clone using PGN to preserve history
     const GameCopy = new Chess();
     GameCopy.loadPgn(Game.pgn());
-    
+
     const CurrentMoveIndex = GameCopy.history().length;
-    
+
     try {
       const MoveResult = GameCopy.move({ from: sourceSquare, to: targetSquare, promotion: "q" });
-      
+
       if (MoveResult === null) return false;
 
       // TRAINER MODE LOGIC
       if (IsTrainerMode) {
         const ExpectedMove = ExpectedMoves[CurrentMoveIndex];
-        
+
         if (MoveResult.san !== ExpectedMove) {
-          SetLastError(`Mistake! Expected ${ExpectedMove}, but you played ${MoveResult.san}.`);
+          // 1. Check if the deviated sequence is actually a known opening
+          let AlternativeOpeningName = null;
+          if (Openings) {
+            const Result = lookupByMoves(GameCopy, Openings);
+            if (Result && Result.opening && Result.opening.name) {
+              AlternativeOpeningName = Result.opening.name;
+            }
+          }
+
+          // 2. If it's a known opening, praise them but reject the move gently
+          if (AlternativeOpeningName) {
+            SetLastError(`Valid Theory! You played the ${AlternativeOpeningName}. That is a great move, but we are practicing the ${TargetOpening.Name} sequence. Try again.`);
+            return false;
+          }
+
+          // 3. If it is NOT in the database, treat it as a real mistake and fire Stockfish
+          const ExpectedGameCopy = new Chess();
+          ExpectedGameCopy.loadPgn(Game.pgn());
+          ExpectedGameCopy.move(ExpectedMove);
+          const ExpectedFen = ExpectedGameCopy.fen();
+
+          const ActualFen = GameCopy.fen();
+
+          // Run engine evaluation in background
+          EvaluateDeviation(ExpectedFen, ActualFen, ExpectedMove, MoveResult.san);
           return false; // Reject the move
         }
-        
+
         SetLastError('');
         SetGame(GameCopy);
         BuildMoveTree(ExpectedMoves, CurrentMoveIndex + 1);
-        
+
         // Trigger Opponent Move
         AutoPlayOpponentMove(GameCopy, CurrentMoveIndex + 1);
         return true;
@@ -153,7 +249,7 @@ export default function App() {
       }
       SetGame(GameCopy);
       return true;
-      
+
     } catch {
       return false;
     }
