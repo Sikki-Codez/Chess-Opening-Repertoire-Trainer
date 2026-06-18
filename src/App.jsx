@@ -15,8 +15,12 @@ import {
   X
 } from 'lucide-react';
 import Tree from 'react-d3-tree';
-import StockfishWorker from './stockfishWorker?worker';
 import './index.css';
+
+// Static style constants for Chessboard to optimize rendering performance
+const DARK_SQUARE_STYLE = { backgroundColor: '#b58863' };
+const LIGHT_SQUARE_STYLE = { backgroundColor: '#f0d9b5' };
+const BOARD_STYLE = { borderRadius: '0.375rem', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.5)' };
 
 // Curated list of popular openings for default repertoire
 const PopularOpenings = [
@@ -105,9 +109,10 @@ export default function App() {
     }
   };
 
-  // 1. Initialize Stockfish worker
+  // 1. Initialize Stockfish worker using native Worker loaded as static asset
   useEffect(() => {
-    EngineWorkerRef.current = new StockfishWorker();
+    const wasmSupported = typeof WebAssembly === 'object' && WebAssembly.validate(Uint8Array.of(0x0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00));
+    EngineWorkerRef.current = new Worker(wasmSupported ? '/stockfish.wasm.js' : '/stockfish.js');
     return () => {
       if (EngineWorkerRef.current) {
         EngineWorkerRef.current.terminate();
@@ -314,12 +319,14 @@ export default function App() {
     
     const GetScoreFromWhitePerspective = (Fen) => {
       return new Promise((resolve) => {
+        const wasmSupported = typeof WebAssembly === 'object' && WebAssembly.validate(Uint8Array.of(0x0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00));
+        const TempWorker = new Worker(wasmSupported ? '/stockfish.wasm.js' : '/stockfish.js');
         let Score = 0;
         let TimeoutId = null;
         
         const Cleanup = () => {
           if (TimeoutId) clearTimeout(TimeoutId);
-          EngineWorkerRef.current.removeEventListener('message', Listener);
+          TempWorker.terminate();
         };
 
         const Listener = (e) => {
@@ -343,10 +350,10 @@ export default function App() {
           resolve(Score);
         }, 3000);
 
-        EngineWorkerRef.current.addEventListener('message', Listener);
-        EngineWorkerRef.current.postMessage('ucinewgame');
-        EngineWorkerRef.current.postMessage('position fen ' + Fen);
-        EngineWorkerRef.current.postMessage('go depth 12');
+        TempWorker.addEventListener('message', Listener);
+        TempWorker.postMessage('ucinewgame');
+        TempWorker.postMessage('position fen ' + Fen);
+        TempWorker.postMessage('go depth 12');
       });
     };
 
@@ -360,7 +367,11 @@ export default function App() {
 
   function OnPieceDrop(sourceSquare, targetSquare) {
     const GameCopy = new Chess();
-    GameCopy.loadPgn(Game.pgn());
+    try {
+      GameCopy.loadPgn(Game.pgn());
+    } catch (pgnErr) {
+      console.error("Failed to load PGN:", pgnErr);
+    }
     const CurrentMoveIndex = GameCopy.history().length;
 
     // Reject move immediately if it is not the user's turn to move in Trainer Mode
@@ -509,15 +520,7 @@ export default function App() {
 
   const WhitePct = GetWhitePercentage();
 
-  const ChessboardOptions = {
-    position: Game.fen(),
-    boardOrientation: PlayerColor === 'w' ? 'white' : 'black',
-    onPieceDrop: OnPieceDrop,
-    customDarkSquareStyle: { backgroundColor: '#b58863' },
-    customLightSquareStyle: { backgroundColor: '#f0d9b5' },
-    customBoardStyle: { borderRadius: '0.375rem', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.5)' },
-    animationDuration: 200
-  };
+
 
   return (
     <div className="flex h-screen w-full bg-stone-950 text-stone-100 overflow-hidden font-sans select-none">
@@ -560,7 +563,7 @@ export default function App() {
             </button>
             <button 
               onClick={() => SetIsTrainerMode(true)}
-              className={`flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-all ${IsTrainerMode ? 'bg-[#b58863] text-stone-950 shadow-md font-bold' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-md transition-all ${IsTrainerMode ? 'bg-[#b58863] text-stone-950 shadow-md font-bold' : 'text-stone-400 hover:text-stone-200'}`}
             >
               <BookOpen className="w-3.5 h-3.5" />
               <span>Trainer Mode</span>
@@ -755,7 +758,15 @@ export default function App() {
 
           {/* Graphical Chessboard */}
           <div className="w-[560px] h-[560px] relative select-none">
-            <Chessboard {...ChessboardOptions} />
+            <Chessboard 
+              position={Game.fen()}
+              boardOrientation={PlayerColor === 'w' ? 'white' : 'black'}
+              onPieceDrop={OnPieceDrop}
+              customDarkSquareStyle={DARK_SQUARE_STYLE}
+              customLightSquareStyle={LIGHT_SQUARE_STYLE}
+              customBoardStyle={BOARD_STYLE}
+              animationDuration={200}
+            />
           </div>
         </div>
 
@@ -789,18 +800,18 @@ export default function App() {
                   value={NewOpeningName}
                   onChange={(e) => SetNewOpeningName(e.target.value)}
                   placeholder="e.g. Sicilian Defense: Najdorf Variation"
-                  className="w-full bg-slate-950 border border-stone-800 focus:border-[#b58863] rounded-lg p-2.5 text-sm text-stone-200 focus:outline-none"
+                  className="w-full bg-stone-950 border border-stone-800 focus:border-[#b58863] rounded-lg p-2.5 text-sm text-stone-200 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Moves list (SAN/PGN)</label>
+                <label className="text-xs font-semibold text-stone-400 uppercase tracking-wider block mb-1.5">Moves list (SAN/PGN)</label>
                 <textarea 
                   rows="3"
                   value={NewOpeningMoves}
                   onChange={(e) => SetNewOpeningMoves(e.target.value)}
                   placeholder="e.g. 1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6"
-                  className="w-full bg-slate-950 border border-stone-800 focus:border-[#b58863] rounded-lg p-2.5 text-sm text-stone-200 font-mono focus:outline-none resize-none"
+                  className="w-full bg-stone-950 border border-stone-800 focus:border-[#b58863] rounded-lg p-2.5 text-sm text-stone-200 font-mono focus:outline-none resize-none"
                 />
               </div>
 
