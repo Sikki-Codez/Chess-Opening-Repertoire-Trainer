@@ -443,7 +443,8 @@ export default function App() {
       SetGame(GameCopy);
       return true;
 
-    } catch {
+    } catch (e) {
+      console.error("Caught error in OnPieceDrop try-catch:", e);
       return false;
     }
   }
@@ -531,7 +532,7 @@ export default function App() {
 
 
   return (
-    <div className="flex h-screen w-full bg-stone-950 text-stone-100 overflow-hidden font-sans select-none">
+    <div className="flex h-screen w-full bg-stone-950 text-stone-100 overflow-hidden font-sans">
       
       {/* Sidebar - Control and Analysis Panel */}
       <div className="w-[420px] flex flex-col border-r border-stone-800 bg-stone-900 shadow-2xl z-10 relative">
@@ -765,7 +766,7 @@ export default function App() {
           </div>
 
           {/* Graphical Chessboard */}
-          <div className="w-[560px] h-[560px] relative select-none">
+          <div className="w-[560px] h-[560px] relative">
             <Chessboard 
               position={Game.fen()}
               boardOrientation={PlayerColor === 'w' ? 'white' : 'black'}
