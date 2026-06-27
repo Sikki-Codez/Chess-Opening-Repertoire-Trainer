@@ -279,7 +279,7 @@ export default function App() {
       const MoveResult = AutoGameCopy.move(NextMove);
       SetGame(AutoGameCopy);
       BuildMoveTree(ExpectedMoves, MoveIndex + 1);
-      PlaySound(MoveResult.captured !== undefined);
+      PlaySound(!!MoveResult.captured);
       OpponentTimeoutRef.current = null;
     }, 500);
   };
@@ -388,7 +388,7 @@ export default function App() {
       if (MoveResult === null) return false;
 
       // Play Move/Capture sound effect
-      PlaySound(MoveResult.captured !== undefined);
+      PlaySound(!!MoveResult.captured);
 
       if (IsTrainerMode) {
         const ExpectedMove = ExpectedMoves[CurrentMoveIndex];
@@ -397,7 +397,11 @@ export default function App() {
           // Check if deviation is valid opening theory
           let AlternativeOpeningName = null;
           if (Openings) {
-            const Result = lookupByMoves(GameCopy, Openings);
+            // lookupByMoves mutates the chess object (calls undo/load which wipes move history)
+            // so we must pass a defensive copy, never the real game or working copy
+            const LookupCopy = new Chess();
+            LookupCopy.loadPgn(GameCopy.pgn());
+            const Result = lookupByMoves(LookupCopy, Openings);
             if (Result && Result.opening && Result.opening.name) {
               AlternativeOpeningName = Result.opening.name;
             }
@@ -429,7 +433,11 @@ export default function App() {
       // Observation mode
       SetLastError('');
       if (Openings) {
-        const Result = lookupByMoves(GameCopy, Openings);
+        // lookupByMoves mutates the chess object (calls undo/load which wipes move history)
+        // so we must pass a defensive copy, never the real game or working copy
+        const LookupCopy = new Chess();
+        LookupCopy.loadPgn(GameCopy.pgn());
+        const Result = lookupByMoves(LookupCopy, Openings);
         SetDetectedOpening(Result && Result.opening ? Result.opening.name : 'Unknown Position');
       }
       SetGame(GameCopy);
