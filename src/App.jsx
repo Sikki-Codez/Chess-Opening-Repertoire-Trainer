@@ -96,6 +96,10 @@ export default function App() {
   const [evalType, setEvalType] = useState('cp');
   const [isEvaluating, setIsEvaluating] = useState(false);
 
+  // Click-to-move selection state
+  const [selectedSquare, setSelectedSquare] = useState(null);
+  const [legalMoveSquares, setLegalMoveSquares] = useState([]);
+
   // Custom opening modal states
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [newOpeningName, setNewOpeningName] = useState('');
@@ -450,10 +454,9 @@ export default function App() {
     [playerColor]
   );
 
-  // ──────────────────────── Piece drop handler ────────────────────────
-  const onPieceDrop = useCallback(
-    (sourceSquare, targetSquare, piece) => {
-      // Create a fresh clone of the current game state
+  // ──────────────────────── Execute a move (shared by click-to-move) ────────────────────────
+  const executeMove = useCallback(
+    (sourceSquare, targetSquare) => {
       const gameCopy = cloneGame(game);
       const currentMoveIndex = gameCopy.history().length;
 
@@ -465,40 +468,30 @@ export default function App() {
         if (!isPlayerTurn) return false;
       }
 
-      // Determine promotion piece from the dragged piece string (e.g. "wQ" -> "q")
-      let promotion = 'q';
-      if (piece && piece.length === 2) {
-        const p = piece[1].toLowerCase();
-        if (['q', 'r', 'b', 'n'].includes(p)) promotion = p;
-      }
-
       try {
         const moveResult = gameCopy.move({
           from: sourceSquare,
           to: targetSquare,
-          promotion,
+          promotion: 'q',
         });
         if (moveResult === null) return false;
 
-        // Play sound effect
         playSound(!!moveResult.captured);
 
         if (isTrainerMode) {
           const expectedMove = expectedMoves[currentMoveIndex];
 
           if (moveResult.san !== expectedMove) {
-            // Check if the deviation is valid opening theory
             let alternativeOpeningName = null;
             if (openings) {
               try {
-                // Defensive copy: lookupByMoves calls undo/load internally
                 const lookupCopy = cloneGame(gameCopy);
                 const result = lookupByMoves(lookupCopy, openings);
                 if (result?.opening?.name) {
                   alternativeOpeningName = result.opening.name;
                 }
               } catch {
-                // ECO lookup failed — treat as non-theory move
+                // ECO lookup failed
               }
             }
 
@@ -509,7 +502,6 @@ export default function App() {
               return false;
             }
 
-            // Evaluate deviation with Stockfish
             try {
               const expectedGameCopy = cloneGame(game);
               expectedGameCopy.move(expectedMove);
@@ -527,25 +519,20 @@ export default function App() {
             return false;
           }
 
-          // Correct move in trainer mode
           setLastError('');
           setGame(gameCopy);
           buildMoveTree(expectedMoves, currentMoveIndex + 1);
-
-          // Auto-play opponent's response
           autoPlayOpponentMove(gameCopy, currentMoveIndex + 1);
           return true;
         }
 
-        // ──── Observation mode ────
+        // Observation mode
         setLastError('');
         if (openings) {
           try {
             const lookupCopy = cloneGame(gameCopy);
             const result = lookupByMoves(lookupCopy, openings);
-            setDetectedOpening(
-              result?.opening?.name || 'Unknown Position'
-            );
+            setDetectedOpening(result?.opening?.name || 'Unknown Position');
           } catch {
             setDetectedOpening('Unknown Position');
           }
@@ -569,6 +556,105 @@ export default function App() {
       evaluateDeviation,
     ]
   );
+
+  // ──────────────────────── Click-to-move: square click handler ────────────────────────
+  const onSquareClick = useCallback(
+    (square) => {
+      // If a piece is already selected and user clicks a legal destination → execute
+      if (selectedSquare) {
+        if (legalMoveSquares.includes(square)) {
+          const ok = executeMove(selectedSquare, square);
+          setSelectedSquare(null);
+          setLegalMoveSquares([]);
+          if (ok) return;
+        }
+
+        // Clicked the same square again → deselect
+        if (square === selectedSquare) {
+          setSelectedSquare(null);
+          setLegalMoveSquares([]);
+          return;
+        }
+      }
+
+      // Try to select a new piece on this square
+      const piece = game.get(square);
+      if (!piece) {
+        setSelectedSquare(null);
+        setLegalMoveSquares([]);
+        return;
+      }
+
+      // In trainer mode, only allow selecting the player's own pieces
+      if (isTrainerMode) {
+        if (piece.color !== playerColor) {
+          setSelectedSquare(null);
+          setLegalMoveSquares([]);
+          return;
+        }
+      }
+
+      // Only allow selecting pieces whose turn it is
+      const turn = game.turn(); // 'w' or 'b'
+      if (piece.color !== turn) {
+        setSelectedSquare(null);
+        setLegalMoveSquares([]);
+        return;
+      }
+
+      // Compute legal moves for this piece
+      const moves = game.moves({ square, verbose: true });
+      if (moves.length === 0) {
+        setSelectedSquare(null);
+        setLegalMoveSquares([]);
+        return;
+      }
+
+      setSelectedSquare(square);
+      setLegalMoveSquares(moves.map((m) => m.to));
+    },
+    [selectedSquare, legalMoveSquares, game, isTrainerMode, playerColor, executeMove]
+  );
+
+  // Clear selection whenever the game state changes (e.g. after opponent auto-play)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedSquare(null);
+    setLegalMoveSquares([]);
+  }, [game]);
+
+  // ──────────────────────── Build custom square styles for highlights ────────────────────────
+  const customSquareStyles = (() => {
+    const styles = {};
+
+    // Highlight the selected piece's square
+    if (selectedSquare) {
+      styles[selectedSquare] = {
+        backgroundColor: 'rgba(255, 191, 0, 0.45)',
+        borderRadius: '0',
+      };
+    }
+
+    // Highlight legal move destinations
+    legalMoveSquares.forEach((sq) => {
+      const occupant = game.get(sq);
+      if (occupant) {
+        // Capture target — red-tinted ring
+        styles[sq] = {
+          background: 'radial-gradient(circle, transparent 55%, rgba(239, 68, 68, 0.55) 56%)',
+          borderRadius: '0',
+        };
+      } else {
+        // Empty square — green dot
+        styles[sq] = {
+          background: 'radial-gradient(circle, rgba(34, 197, 94, 0.55) 22%, transparent 23%)',
+          borderRadius: '0',
+        };
+      }
+    });
+
+    return styles;
+  })();
 
   // ──────────────────────── Custom opening CRUD ────────────────────────
   const handleSaveOpening = useCallback(
@@ -922,10 +1008,13 @@ export default function App() {
               id="main-board"
               position={game.fen()}
               boardOrientation={playerColor === 'w' ? 'white' : 'black'}
-              onPieceDrop={onPieceDrop}
+              onSquareClick={onSquareClick}
+              onPieceClick={(piece, square) => onSquareClick(square)}
+              arePiecesDraggable={false}
               customDarkSquareStyle={DARK_SQUARE_STYLE}
               customLightSquareStyle={LIGHT_SQUARE_STYLE}
               customBoardStyle={BOARD_STYLE}
+              customSquareStyles={customSquareStyles}
               animationDuration={200}
             />
           </div>
@@ -933,7 +1022,7 @@ export default function App() {
 
         {/* Footer */}
         <div className="mt-4 text-stone-500 text-[11px] font-mono select-none">
-          Drag and drop pieces to play theory. Deviations trigger automatic Stockfish analysis.
+          Click a piece to see legal moves, then click a destination to play.
         </div>
       </div>
 
