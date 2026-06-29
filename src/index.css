@@ -3,12 +3,12 @@
 @theme {
   --color-board-light: #f0d9b5;
   --color-board-dark: #b58863;
-  --color-highlight-correct: #a7f3d0;
-  --color-highlight-incorrect: #fecaca;
+  --color-highlight-correct: #d97706; /* warm amber */
+  --color-highlight-incorrect: #ef4444; /* red */
 }
 
 @layer base {
   body {
-    @apply bg-slate-900 text-slate-100 antialiased font-sans m-0 p-0;
+    @apply bg-stone-950 text-stone-100 antialiased font-sans m-0 p-0;
   }
 }
